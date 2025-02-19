@@ -1,20 +1,15 @@
 ## 用户交流
-[telegram频道](https://sum4all.site/telegram)\
-[X](https://sum4all.site/twitter)
+[discord](https://discord.gg/AKXYq32Bxc)\
+[X](https://x.com/fatwang2ai)
 
 ## 友情赞助
 <a href="https://www.buymeacoffee.com/fatwang2" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
 
 ## 简介
-本项目为大模型内容总结服务，有微信插件、[telegram机器人](https://t.me/sum4all_bot)
-、[iOS快捷指令](https://sum4all.site/shortcuts)
-三个版本，其中微信插件需要自行部署，需配合[chatgpt-on-wechat](https://github.com/zhayujie/chatgpt-on-wechat)项目，其他插件可点击链接自行体验
+本项目为大模型内容总结服务，有微信插件、[iOS快捷指令](https://www.icloud.com/shortcuts/1fa834ddaa3340cda4e0e5956fc518b3)两个版本，其中微信插件需要自行部署，需配合[chatgpt-on-wechat](https://github.com/zhayujie/chatgpt-on-wechat)项目
 
 ## iOS快捷指令
 <img src="picture/shortcuts.PNG" width="200px" alt="文件" />
-
-## telegram机器人
-<img src="picture/telegram_bot.PNG" width="200px" alt="文件" />
 
 ## 微信插件
 ### 更新日志
@@ -79,8 +74,8 @@
 | 服务 | 支持功能 | 特点 | 注册地址 | 图片介绍 |
 |------|----------|------|----------|-----------|
 | OpenAI | 搜索、文件、图片、绝大部分网页文章 | 无需额外申请服务，舍得花钱的话，效果最可控 | [OpenAI](https://platform.openai.com/account/api-keys) \| [LinkAI代理](https://sum4all.site/linkai) | ![OpenAI](picture/openai.png) |
-| sum4all | 搜索、文件、图片、绝大部分网页文章 | 注册免费送1万token，邀请好友注册再各得5k，是openai官方价的五折| [sum4all](https://sum4all.site/key) | ![Sum4all](picture/sum4all.png) |
-| search1api | Google、Bing、Duckduckgo搜索 | 搜索聚合服务，无需注册，$0.99/1000次每个月| [search1api](https://search2ai.online/api)| ![search1api](picture/search1api.png) |
+| sum4all | 搜索、文件、图片、绝大部分网页文章 | 自建的代理服务，包含 OpenAI 全模型，官网同价 | [sum4all](https://sum4all.site/key) | ![Sum4all](picture/sum4all.png) |
+| search1api | Google、Bing、Duckduckgo搜索 | 搜索聚合服务，注册免费送 100 积分，$0.99/1000次每个月| [search1api](https://www.search1api.com/?utm_source=sum4all)| ![search1api](picture/search1api.png) |
 | Gemini | 搜索、文件、图片、绝大部分网页文章 | Google最新大模型，免费 | [gemini](https://sum4all.site/google) | ![Gemini](picture/gemini.png) |
 | Azure | 文件、图片 | 微软部署的OpenAI | [Azure](https://oai.azure.com) | ![Azure](picture/azure.png) |
 | Perplexity | 搜索 | 国外的搜索总结服务，速度快，价格贵，自带大模型，需自行注册和付费 | [Perplexity](https://sum4all.site/perplexity) | ![Perplexity](picture/p.png) | ![Alt text](picture/WX20231201-004639@2x.png) |
