@@ -41,7 +41,7 @@
     "gemini_key": "",
     "perplexity_key": "",
     "open_ai_api_key": "",
-    "model": "gpt-3.5-turbo",
+    "model": "gpt-4o",
     "open_ai_api_base": "https://api.openai.com/v1",
     "azure_deployment_id": "",
     "xunfei_app_id": "",
@@ -50,6 +50,10 @@
     "opensum_key": "",
     "bibigpt_key": "",
     "outputLanguage": "zh-CN",
-    "flomo_key":""
+    "flomo_key":"",
+    "aliyun_key":"",
+    "aliyun_base_url":"https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "aliyun_vl_model":"qwen2.5-vl-72b-instruct",
+    "aliyun_sum_model":"qwen-long"
   }
 }
