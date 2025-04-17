@@ -1596,12 +1596,60 @@ class sum4all(Plugin):
             isgroup = e_context["context"].get("isgroup", False)
             prompt = user_params.get('prompt', self.url_sum_prompt)
             
+            # 添加详细日志
+            logger.info(f"用户ID: {user_id}, 参数缓存: {user_params}")
+            logger.info(f"提取的prompt值: '{prompt}'")
+            logger.info(f"URL提示词默认值: '{self.url_sum_prompt}'")
+            
             reply_content = "处理时发生未知错误" # 初始化默认错误消息
             try:
                 logger.info('Sending request to Aliyun...')
                 logger.info(f'Request URL: {api_base}')
                 
                 result_content = None # 初始化结果内容
+
+                # -- 更新 Prompt --
+                # 新的系统 Prompt
+                new_system_prompt = (
+                    '你是一个新闻专家，我会给你发文章标题和内容，请你用简单明了的语言做总结。'
+                    '请严格按照以下格式输出：\n'
+                    '📰《*{文章标题}*》\n\n'
+                    '📌总结\n'
+                    '一句话讲清楚整篇文章的核心观点，控制在30字左右。\n\n'
+                    '💡要点\n'
+                    '用数字序号列出来3-5个文章的核心内容，尽量使用emoji让你的表达更生动'
+                )
+
+                # 增加详细日志
+                logger.info(f"检查是否有追问: 'prompt' in user_params = {('prompt' in user_params)}")
+                if 'prompt' in user_params:
+                    logger.info(f"追问内容: '{user_params['prompt']}'")
+                    logger.info(f"追问内容非空检查: user_params['prompt'].strip() = '{user_params['prompt'].strip()}' (非空={bool(user_params['prompt'].strip())})")
+                
+                # 新的用户 Prompt 内容
+                if 'prompt' in user_params and user_params['prompt'].strip():
+                    # 用户有追问，将追问和网页内容结合
+                    logger.info("检测到有效追问，正在处理追问内容...")
+                    user_question = user_params['prompt'].strip()
+                    if webpage_title:
+                        user_content = f"文章标题：{webpage_title}\n\n文章内容：\n{webpage_content[:5500]}\n\n用户问题：{user_question}"
+                    else:
+                        user_content = f"文章内容：\n{webpage_content[:5700]}\n\n用户问题：{user_question}"
+                    # 如果是追问，调整系统提示
+                    new_system_prompt = (
+                        '你是一个新闻专家，我会给你发文章标题、内容和用户问题。请针对用户的具体问题，'
+                        '根据文章内容给出准确、有帮助的回答。保持专业、客观的语气，使用emoji让表达更生动。'
+                    )
+                    logger.info("已成功构建追问内容和系统提示")
+                else:
+                    # 没有追问，使用原有逻辑
+                    logger.info("没有检测到有效追问，使用默认总结逻辑")
+                    if webpage_title:
+                        user_content = f"文章标题：{webpage_title}\n\n文章内容：\n{webpage_content[:5800]}"
+                    else:
+                        # 如果没有提取到标题，则不包含标题前缀
+                        user_content = webpage_content[:6000]
+
                 if has_openai:
                     # 使用OpenAI客户端库
                     try:
@@ -1610,32 +1658,15 @@ class sum4all(Plugin):
                             base_url=api_base
                         )
                         
-                        # -- 更新 Prompt --
-                        # 新的系统 Prompt
-                        new_system_prompt = (
-                            '你是一个新闻专家，我会给你发文章标题和内容，请你用简单明了的语言做总结。'
-                            '请严格按照以下格式输出：\n'
-                            '📰《*{文章标题}*》\n\n'
-                            '📌总结\n'
-                            '一句话讲清楚整篇文章的核心观点，控制在30字左右。\n\n'
-                            '💡要点\n'
-                            '用数字序号列出来3-5个文章的核心内容，尽量使用emoji让你的表达更生动'
-                        )
-
-                        # 新的用户 Prompt 内容
-                        if webpage_title:
-                            user_content = f"文章标题：{webpage_title}\n\n文章内容：\n{webpage_content[:5800]}"
-                        else:
-                            # 如果没有提取到标题，则不包含标题前缀
-                            user_content = webpage_content[:6000]
-
                         # 构造 messages 列表
                         messages_to_send = [
                             {"role": "system", "content": new_system_prompt}, # 使用新的 system prompt
                             {"role": "user", "content": user_content} # 使用新的 user content
                         ]
                         # 添加日志记录
-                        logger.debug(f"Messages sent to Aliyun (OpenAI client): {[{"role": "system", "content": new_system_prompt}, {"role": "user", "content": user_content}]}")
+                        # logger.debug(f"Messages sent to Aliyun (OpenAI client): {[{"role": "system", "content": new_system_prompt}, {"role": "user", "content": user_content}]}")
+                        messages_to_log = [{"role": "system", "content": new_system_prompt}, {"role": "user", "content": user_content}]
+                        logger.debug(f"Messages sent to Aliyun (OpenAI client): {repr(messages_to_log)}")
                         
                         completion = client.chat.completions.create(
                             model=self.aliyun_sum_model,
