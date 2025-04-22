@@ -1,7 +1,7 @@
 {
   "url_sum": {
     "enabled": true,
-    "service": "sum4all",
+    "service": "aliyun",
     "group": true,
     "qa_enabled":true,
     "qa_prefix":"问",
@@ -9,7 +9,7 @@
   },
   "search_sum": {
     "enabled": false,
-    "service": "sum4all",
+    "service": "aliyun",
     "search_service": "duckduckgo",
     "group": true,
     "search_prefix":"搜",
@@ -17,7 +17,7 @@
   },
   "file_sum": {
     "enabled": false,
-    "service": "sum4all",
+    "service": "aliyun",
     "max_file_size": "15000",
     "group": true,
     "qa_prefix":"问",
@@ -25,7 +25,7 @@
   },
   "image_sum": {
     "enabled": false,
-    "service": "sum4all",
+    "service": "aliyun",
     "group": true,
     "qa_prefix":"问",
     "prompt": "先全局分析图片的主要内容，并按照逻辑分层次、段落，提炼出5个左右图片中的精华信息、关键要点，生动地向读者描述图片的主要内容。注意排版、换行、emoji、标签的合理搭配，清楚地展现图片讲了什么"
@@ -51,10 +51,15 @@
     "bibigpt_key": "",
     "outputLanguage": "zh-CN",
     "flomo_key":"",
-    #新增了阿里百炼的通道，service 填 aliyun
+    ### 新增了阿里百炼的通道，service 填 aliyun，模型可自行修改
     "aliyun_key":"",
     "aliyun_base_url":"https://dashscope.aliyuncs.com/compatible-mode/v1",
     "aliyun_vl_model":"qwen2.5-vl-72b-instruct",
-    "aliyun_sum_model":"qwen-long"
+    "aliyun_sum_model":"qwen-long",
+    ### 硅基流动的通道，service 填 sflow，模型可自行修改
+        "siliconflow_key":"",
+    "siliconflow_base_url":"https://api.siliconflow.com/v1",
+    "siliconflow_vl_model":"Qwen/Qwen2.5-VL-72B-Instruct",
+    "siliconflow_sum_model":"Qwen/Qwen2.5-72B-Instruct"
   }
 }

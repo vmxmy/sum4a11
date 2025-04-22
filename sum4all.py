@@ -94,11 +94,20 @@ class sum4all(Plugin):
             self.xunfei_api_secret = self.keys.get("xunfei_api_secret", "")
             self.perplexity_key = self.keys.get("perplexity_key", "")
             self.flomo_key = self.keys.get("flomo_key", "")
+            # Load Aliyun config
             self.aliyun_key = self.keys.get("aliyun_key", "")
             self.aliyun_base_url = self.keys.get("aliyun_base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
             self.aliyun_model = self.keys.get("aliyun_model", "qwen-max")
             self.aliyun_vl_model = self.keys.get("aliyun_vl_model", "qwen-vl-max-latest")
             self.aliyun_sum_model = self.keys.get("aliyun_sum_model", "qwen-long")
+            # Load SiliconFlow (sflow) config - CORRECTED
+            # self.sflow_key = self.keys.get("sflow_key", "") # Old incorrect key
+            # self.sflow_base_url = self.keys.get("sflow_base_url", "") # Old incorrect key
+            # self.sflow_model = self.keys.get("sflow_model", "") # Old incorrect key - missing distinction
+            self.siliconflow_key = self.keys.get("siliconflow_key", "") # Use correct key from user
+            self.siliconflow_base_url = self.keys.get("siliconflow_base_url", "") # Use correct key from user
+            self.siliconflow_vl_model = self.keys.get("siliconflow_vl_model", "") # Load VL model
+            self.siliconflow_sum_model = self.keys.get("siliconflow_sum_model", "") # Load SUM model
 
             # 提取sum服务的配置
             self.url_sum_enabled = self.url_sum.get("enabled", False)
@@ -134,6 +143,32 @@ class sum4all(Plugin):
 
             # 初始化成功日志
             logger.info("[sum4all] inited.")
+            # Log configured services after initialization
+            if self.url_sum_enabled:
+                logger.info(f"[sum4all] URL Summarization ENABLED. Service: {self.url_sum_service}")
+            else:
+                logger.info("[sum4all] URL Summarization DISABLED.")
+            
+            if self.file_sum_enabled:
+                logger.info(f"[sum4all] File Summarization ENABLED. Service: {self.file_sum_service}")
+            else:
+                logger.info("[sum4all] File Summarization DISABLED.")
+
+            if self.image_sum_enabled:
+                logger.info(f"[sum4all] Image Summarization ENABLED. Service: {self.image_sum_service}")
+            else:
+                logger.info("[sum4all] Image Summarization DISABLED.")
+                
+            if self.search_sum_enabled:
+                 logger.info(f"[sum4all] Search Summarization ENABLED. Service: {self.search_sum_service}, Search Engine: {self.search_service}")
+            else:
+                 logger.info("[sum4all] Search Summarization DISABLED.")
+                 
+            if self.note_enabled:
+                 logger.info(f"[sum4all] Note Taking ENABLED. Service: {self.note_service}")
+            else:
+                 logger.info("[sum4all] Note Taking DISABLED.")
+                 
         except Exception as e:
             # 初始化失败日志
             logger.warn(f"sum4all init failed: {e}")
@@ -260,6 +295,8 @@ class sum4all(Plugin):
                         self.params_cache[user_id] = {}
                         self.params_cache[user_id]['last_url'] = content
                         logger.info('Updated last_url in params_cache for user.')
+                        # Add log before calling call_service
+                        logger.info(f"[sum4all] Detected URL/Sharing (Group), preparing to call service for sum. Service configured: {self.url_sum_service}")
                         self.call_service(content, e_context, "sum")
                         return
                     else:
@@ -270,6 +307,8 @@ class sum4all(Plugin):
                     self.params_cache[user_id] = {}
                     self.params_cache[user_id]['last_url'] = content
                     logger.info('Updated last_url in params_cache for user.')
+                    # Add log before calling call_service
+                    logger.info(f"[sum4all] Detected URL/Sharing (Private), preparing to call service for sum. Service configured: {self.url_sum_service}")
                     self.call_service(content, e_context, "sum")
                     return
             
@@ -285,9 +324,13 @@ class sum4all(Plugin):
                 self.params_cache[user_id] = {}
                 self.params_cache[user_id]['last_url'] = content
                 logger.info('Updated last_url in params_cache for user.')
+                # Add log before calling call_service
+                logger.info(f"[sum4all] Detected URL Match, preparing to call service for sum. Service configured: {self.url_sum_service}")
                 self.call_service(content, e_context, "sum")
                 return
     def call_service(self, content, e_context, service_type):
+        # Add log at the beginning of call_service
+        logger.info(f"[sum4all] Entering call_service for type '{service_type}'. Configured URL service: {self.url_sum_service}")
         if service_type == "search":
             if self.search_sum_service == "openai" or self.search_sum_service == "sum4all" or self.search_sum_service == "gemini" or self.search_sum_service == "azure":
                 self.handle_search(content, e_context)
@@ -308,6 +351,8 @@ class sum4all(Plugin):
                 self.handle_opensum(content, e_context)
             elif self.url_sum_service == "aliyun":
                 self.handle_aliyun_url(content, e_context)
+            elif self.url_sum_service == "sflow": # Existing elif for sflow
+                self.handle_sflow_url(content, e_context) # Call the sflow handler
         elif service_type == "note":
             if self.note_service == "flomo":
                 self.handle_note(content, e_context)
@@ -1887,6 +1932,163 @@ class sum4all(Plugin):
             return None
         logger.info("extract_content: 文件内容提取完成")
         return read_func(file_path)
+
+    # Add the handle_sflow_url method implementation here
+    def handle_sflow_url(self, content, e_context):
+        # Add log at the beginning of handle_sflow_url
+        logger.info("[sum4all] Entering handle_sflow_url")
+        # 1. 获取网页内容和标题
+        webpage_content, webpage_title = self.get_webpage_content(content)
+        if not webpage_content:
+            reply_content = "无法获取网页内容，请检查链接是否有效"
+            logger.warning(f"[sum4all][sflow] Failed to get webpage content for URL: {content}")
+            reply = Reply(type=ReplyType.TEXT, content=reply_content)
+            e_context["reply"] = reply
+            e_context.action = EventAction.BREAK_PASS
+            return
+        else:
+            # Log successful content retrieval
+            logger.info(f"[sum4all][sflow] Successfully fetched webpage content. Title: '{webpage_title}'. Content length: {len(webpage_content)}")
+            logger.debug(f"[sum4all][sflow] Webpage content snippet: {webpage_content[:200]}..." )
+
+        # 2. 获取配置和参数 - CORRECTED variable usage
+        # api_key = self.sflow_key # Old incorrect variable
+        # api_base = self.sflow_base_url # Old incorrect variable
+        # model = self.sflow_model # Old incorrect variable
+        api_key = self.siliconflow_key # Use correctly loaded key
+        api_base = self.siliconflow_base_url # Use correctly loaded base url
+        # Use the specific sum model for URL summarization
+        model = self.siliconflow_sum_model 
+
+        msg: ChatMessage = e_context["context"]["msg"]
+        user_id = msg.from_user_id
+        user_params = self.params_cache.get(user_id, {})
+        isgroup = e_context["context"].get("isgroup", False)
+        prompt = user_params.get('prompt', self.url_sum_prompt) # Use the general url_sum_prompt for now
+
+        logger.info(f"[sum4all][sflow] Using API Key: {'*' * (len(api_key) - 4) + api_key[-4:] if api_key else 'None'}")
+        logger.info(f"[sum4all][sflow] Using API Base: {api_base}")
+        logger.info(f"[sum4all][sflow] Using Model: {model}")
+
+        # 3. 构建 API 请求
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {api_key}'
+        }
+
+        # Re-use a similar system prompt structure
+        system_prompt = (
+            '你是一个新闻专家，我会给你发文章标题和内容，请你用简单明了的语言做总结。'
+            '请严格按照以下格式输出：\\n'
+            '📰《*{文章标题}*》\\n\\n'
+            '📌总结\\n'
+            '一句话讲清楚整篇文章的核心观点，控制在30字左右。\\n\\n'
+            '💡要点\\n'
+            '用数字序号列出来3-5个文章的核心内容，尽量使用emoji让你的表达更生动'
+        )
+
+        # Handle potential QA prompt
+        if 'prompt' in user_params and user_params['prompt'].strip():
+            logger.info("[sum4all][sflow] Detected follow-up question.")
+            user_question = user_params['prompt'].strip()
+            if webpage_title:
+                user_content = f"文章标题：{webpage_title}\\n\\n文章内容：\\n{webpage_content[:5500]}\\n\\n用户问题：{user_question}" # Limit content length
+            else:
+                user_content = f"文章内容：\\n{webpage_content[:5700]}\\n\\n用户问题：{user_question}" # Limit content length
+            system_prompt = ( # Adjust system prompt for QA
+                '你是一个新闻专家，我会给你发文章标题、内容和用户问题。请针对用户的具体问题，'
+                '根据文章内容给出准确、有帮助的回答。保持专业、客观的语气，使用emoji让你的表达更生动。'
+            )
+        else:
+            logger.info("[sum4all][sflow] No follow-up question detected, performing summarization.")
+            if webpage_title:
+                user_content = f"文章标题：{webpage_title}\\n\\n文章内容：\\n{webpage_content[:5800]}" # Limit content length
+            else:
+                user_content = webpage_content[:6000] # Limit content length
+
+        # Log the prompts being sent
+        logger.debug(f"[sum4all][sflow] System prompt being sent: {system_prompt[:200]}..." )
+        logger.debug(f"[sum4all][sflow] User content being sent: {user_content[:300]}..." )
+
+        payload = {
+            "model": model, # Correct model variable is now used
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content}
+            ],
+            "temperature": 0.7, # You might adjust this
+            "max_tokens": 1500 # Adjust as needed
+        }
+        logger.debug(f"[sum4all][sflow] Request payload: {payload}")
+
+        # 4. 调用 API
+        reply_content = "处理时发生未知错误" # Default error message
+        try:
+            logger.info(f"[sum4all][sflow] Sending request to SiliconFlow API: {api_base}/chat/completions")
+            # Ensure api_base is not empty before making the call
+            if not api_base:
+                 logger.error("[sum4all][sflow] API Base URL is empty. Cannot send request.")
+                 raise ValueError("SiliconFlow API Base URL is not configured.")
+            response = requests.post(
+                f"{api_base}/chat/completions", # Assuming standard endpoint path
+                headers=headers,
+                json=payload,
+                verify=False, # Consider security implications
+                timeout=60 # Increased timeout
+            )
+            logger.info(f"[sum4all][sflow] Received response status code: {response.status_code}")
+            response.raise_for_status() # Check for HTTP errors first
+            response_data = response.json()
+            logger.debug(f"[sum4all][sflow] Response data: {response_data}")
+
+            # Parse response
+            if "choices" in response_data and len(response_data["choices"]) > 0:
+                result_content = response_data["choices"][0].get("message", {}).get("content")
+                if result_content:
+                    reply_content = result_content
+                    # Log successful content extraction
+                    logger.info("[sum4all][sflow] Successfully extracted content from SiliconFlow response.")
+                    logger.debug(f"[sum4all][sflow] Extracted content snippet: {reply_content[:200]}..." )
+                    # Update cache
+                    self.params_cache[user_id]['content'] = result_content
+                    if webpage_title:
+                        self.params_cache[user_id]['title'] = webpage_title
+                    logger.info("[sum4all][sflow] Successfully processed SiliconFlow response and updated cache.")
+                else:
+                    logger.error("[sum4all][sflow] 'content' field missing in API response choice.")
+                    reply_content = "无法从 SiliconFlow API 获取有效的响应内容 (content missing)"
+            else:
+                logger.error("[sum4all][sflow] 'choices' field missing or empty in API response.")
+                reply_content = "无法从 SiliconFlow API 获取有效的响应内容 (choices missing)"
+
+        except ValueError as ve:
+            logger.error(f"[sum4all][sflow] Configuration error: {ve}")
+            reply_content = f"配置错误: {ve}"
+        except requests.exceptions.Timeout:
+            logger.error("[sum4all][sflow] Request to SiliconFlow API timed out.")
+            reply_content = "调用 SiliconFlow API 超时"
+        except requests.exceptions.RequestException as e:
+            logger.error(f"[sum4all][sflow] Error calling SiliconFlow API: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                logger.error(f"[sum4all][sflow] Response status code: {e.response.status_code}")
+                logger.error(f"[sum4all][sflow] Response content: {e.response.text}") # Corrected typo sfollow -> sflow
+                reply_content = f"调用 SiliconFlow API 时发生错误: Status {e.response.status_code}" # More informative error
+            else:
+                 reply_content = f"调用 SiliconFlow API 时发生网络错误: {str(e)}"
+
+        # 5. 构建回复
+        reply = Reply()
+        reply.type = ReplyType.TEXT
+        # Format reply with QA/Note prompts
+        if not self.url_sum_qa_enabled:
+            reply.content = remove_markdown(reply_content)
+        elif isgroup or not self.note_enabled:
+            reply.content = f"{remove_markdown(reply_content)}\n\n💬5min内输入{self.url_sum_qa_prefix}+问题，可继续追问"
+        elif self.note_enabled:
+            reply.content = f"{remove_markdown(reply_content)}\n\n💬5min内输入{self.url_sum_qa_prefix}+问题，可继续追问\n💡输入{self.note_prefix}+笔记，可保存到{self.note_service}"
+
+        e_context["reply"] = reply
+        e_context.action = EventAction.BREAK_PASS
 
 def remove_markdown(text):
     # 替换Markdown的粗体标记
