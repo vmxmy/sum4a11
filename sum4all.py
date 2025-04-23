@@ -32,6 +32,14 @@ try:
 except ImportError:
     has_openai = False
 
+# Moved remove_markdown function here
+def remove_markdown(text):
+    # 替换Markdown的粗体标记
+    text = text.replace("**", "")
+    # 替换Markdown的标题标记
+    text = text.replace("### ", "").replace("## ", "").replace("# ", "")
+    return text
+
 EXTENSION_TO_TYPE = {
     'pdf': 'pdf',
     'doc': 'docx', 'docx': 'docx',
@@ -1217,6 +1225,7 @@ class sum4all(Plugin):
         user_params = self.params_cache.get(user_id, {})
         prompt = user_params.get('prompt', self.image_sum_prompt)
 
+        logger.debug(f"[sum4all] Checking image_sum_service value: '{self.image_sum_service}'") # ADDED DEBUG LOG
         if self.image_sum_service == "openai":
             api_key = self.open_ai_api_key
             api_base = f"{self.open_ai_api_base}/chat/completions"
@@ -1328,8 +1337,9 @@ class sum4all(Plugin):
                     else:
                         logger.error("阿里百炼 API 返回格式错误")
                         reply_content = "总结失败，请稍后重试"
-            else:
-                # 使用requests直接调用
+            # The following else block is the fallback for Aliyun if has_openai is false or fails
+            else: # This else corresponds to 'if has_openai' within the aliyun block
+                logger.info("[sum4all][aliyun_image] Using requests directly for Aliyun...")
                 headers = {
                     'Content-Type': 'application/json',
                     'Authorization': f'Bearer {api_key}'
@@ -1343,21 +1353,94 @@ class sum4all(Plugin):
                     "temperature": 0.7,
                     "max_tokens": 2000
                 }
-                response = requests.post(
-                    api_base if "/chat/completions" in api_base else f"{api_base}/chat/completions",
-                    headers=headers,
-                    json=payload,
-                    verify=False,
-                    timeout=30
-                )
-                response.raise_for_status()
-                result = response.json()
-                if "choices" in result and len(result["choices"]) > 0:
-                    reply_content = result["choices"][0]["message"]["content"]
-                else:
-                    logger.error("阿里百炼 API 返回格式错误")
-                    reply_content = "总结失败，请稍后重试"
-        else:
+                try:
+                    response = requests.post(
+                        api_base if "/chat/completions" in api_base else f"{api_base}/chat/completions",
+                        headers=headers,
+                        json=payload,
+                        verify=False,
+                        timeout=30
+                    )
+                    response.raise_for_status()
+                    result = response.json()
+                    if "choices" in result and len(result["choices"]) > 0:
+                        reply_content = result["choices"][0]["message"]["content"]
+                    else:
+                        logger.error("[sum4all][aliyun_image] Aliyun API response format error (requests).")
+                        reply_content = "总结失败，请稍后重试 (requests)"
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"[sum4all][aliyun_image] Error calling Aliyun API via requests: {e}")
+                    reply_content = "调用阿里百炼API失败 (requests)"
+
+        # <<<<< CORRECTED SFLOW BLOCK STARTS HERE >>>>>
+        elif self.image_sum_service == "sflow":
+            logger.info("[sum4all][sflow_image] Handling SiliconFlow image request...")
+            api_key = self.siliconflow_key
+            api_base = self.siliconflow_base_url
+            model = self.siliconflow_vl_model # Use the specific VL model
+
+            if not api_key or not api_base or not model:
+                 logger.error("[sum4all][sflow_image] SiliconFlow configuration (key, base_url, or vl_model) is missing.")
+                 reply_content = "SiliconFlow 配置不完整，无法处理图片"
+            else:
+                headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}"
+                }
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                            ]
+                        }
+                    ],
+                    "temperature": 0.7,
+                    "max_tokens": 1500
+                }
+                logger.debug(f"[sum4all][sflow_image] Sending payload: {payload}")
+                reply_content = "处理图片时发生未知错误" # Default error
+                try:
+                    logger.info(f"[sum4all][sflow_image] Sending request to {api_base}/chat/completions")
+                    response = requests.post(
+                        f"{api_base}/chat/completions",
+                        headers=headers,
+                        json=payload,
+                        verify=False,
+                        timeout=60
+                    )
+                    logger.info(f"[sum4all][sflow_image] Received response status: {response.status_code}")
+                    response.raise_for_status()
+                    response_data = response.json()
+                    logger.debug(f"[sum4all][sflow_image] Response data: {response_data}")
+                    if "choices" in response_data and len(response_data["choices"]) > 0:
+                        result = response_data["choices"][0].get("message", {}).get("content")
+                        if result:
+                            reply_content = result
+                            logger.info("[sum4all][sflow_image] Successfully extracted content from response.")
+                        else:
+                            logger.error("[sum4all][sflow_image] 'content' missing in response choice.")
+                            reply_content = "无法从 SiliconFlow API 获取有效的响应内容 (content missing)"
+                    else:
+                        logger.error("[sum4all][sflow_image] 'choices' missing or empty in response.")
+                        reply_content = "无法从 SiliconFlow API 获取有效的响应内容 (choices missing)"
+                except requests.exceptions.Timeout:
+                    logger.error("[sum4all][sflow_image] Request timed out.")
+                    reply_content = "调用 SiliconFlow API 处理图片超时"
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"[sum4all][sflow_image] API request error: {e}")
+                    if hasattr(e, 'response') and e.response is not None:
+                        logger.error(f"[sum4all][sflow_image] Response status code: {e.response.status_code}")
+                        logger.error(f"[sum4all][sflow_image] Response content: {e.response.text}")
+                        reply_content = f"调用 SiliconFlow API 处理图片出错: Status {e.response.status_code}"
+                    else:
+                        reply_content = f"调用 SiliconFlow API 处理图片时发生网络错误: {str(e)}"
+
+        # <<<<< END OF CORRECTED SFLOW BLOCK >>>>>
+        else: # Final else for the main service selection
             logger.error(f"未知的image_sum_service配置: {self.image_sum_service}")
             return
 
@@ -1480,619 +1563,3 @@ class sum4all(Plugin):
 2. 然后列出3-5个关键要点
 3. 使用emoji让表达更生动
 4. 保持专业、客观的语气"""
-
-            # 构建用户提示词
-            user_prompt = f"""请总结以下网页内容：
-{prompt}
-
-网页内容：
-{webpage_content[:4000]}  # 限制内容长度，避免超出token限制"""
-
-            payload = {
-                "contents": [
-                    {"role": "user", "parts": [{"text": system_prompt}]},
-                    {"role": "model", "parts": [{"text": "okay"}]},
-                    {"role": "user", "parts": [{"text": user_prompt}]}
-                ],
-                "generationConfig": {
-                    "maxOutputTokens": 800
-                }
-            }
-
-            additional_content = ""
-            try:
-                logger.info('Sending request to Gemini...')
-                response = requests.post(
-                    api_base,
-                    headers=headers,
-                    json=payload,
-                    verify=False
-                )
-                response.raise_for_status()
-                logger.info('Received response from Gemini.')
-                
-                response_data = response.json()
-                if "candidates" in response_data and len(response_data["candidates"]) > 0:
-                    content = response_data["candidates"][0]["content"]["parts"][0]["text"]
-                    self.params_cache[user_id]['content'] = content
-                    
-                    # 尝试从内容中提取标题（第一行）
-                    lines = content.split('\n')
-                    if lines:
-                        title = lines[0].strip()
-                        self.params_cache[user_id]['title'] = title
-                        if title:
-                            additional_content += f"{title}\n\n"
-                    
-                    reply_content = additional_content + content
-                else:
-                    reply_content = "无法获取有效的响应内容"
-
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Error calling Gemini API: {e}")
-                reply_content = f"调用 Gemini API 时发生错误: {str(e)}"
-
-        reply = Reply()
-        reply.type = ReplyType.TEXT
-        if not self.url_sum_qa_enabled:
-            reply.content = remove_markdown(reply_content)
-        elif isgroup or not self.note_enabled:
-            reply.content = f"{remove_markdown(reply_content)}\n\n💬5min内输入{self.url_sum_qa_prefix}+问题，可继续追问"
-        elif self.note_enabled:
-            reply.content = f"{remove_markdown(reply_content)}\n\n💬5min内输入{self.url_sum_qa_prefix}+问题，可继续追问\n💡输入{self.note_prefix}+笔记，可保存到{self.note_service}"
-        
-        e_context["reply"] = reply
-        e_context.action = EventAction.BREAK_PASS
-
-    def handle_azure(self, content, e_context):
-        logger.info('Handling Azure request...')
-        api_key = self.open_ai_api_key
-        api_base = f"{self.open_ai_api_base}/openai/deployments/{self.azure_deployment_id}/chat/completions?api-version=2024-02-15-preview"
-        model = self.model
-        
-        msg: ChatMessage = e_context["context"]["msg"]
-        user_id = msg.from_user_id
-        user_params = self.params_cache.get(user_id, {})
-        isgroup = e_context["context"].get("isgroup", False)
-        prompt = user_params.get('prompt', self.url_sum_prompt)
-        
-        headers = {
-            'Content-Type': 'application/json',
-            'api-key': api_key
-        }
-        
-        system_prompt = """你是一个专业的网页内容总结专家。请按照以下格式总结网页内容：
-1. 首先用一句话总结文章的核心观点（30字以内）
-2. 然后列出3-5个关键要点
-3. 使用emoji让表达更生动
-4. 保持专业、客观的语气"""
-
-        user_prompt = f"""请总结以下网页内容：
-{prompt}
-
-网页链接：{content}"""
-
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ]
-        }
-
-        try:
-            response = requests.post(api_base, headers=headers, json=payload, verify=False)  # 禁用SSL验证
-            response.raise_for_status()
-            response_data = response.json()
-            
-            if "choices" in response_data and len(response_data["choices"]) > 0:
-                content = response_data["choices"][0]["message"]["content"]
-                self.params_cache[user_id]['content'] = content
-                
-                lines = content.split('\n')
-                if lines:
-                    title = lines[0].strip()
-                    self.params_cache[user_id]['title'] = title
-                
-                additional_content = ""
-                if title:
-                    additional_content += f"{title}\n\n"
-                reply_content = additional_content + content
-            else:
-                reply_content = "无法获取有效的响应内容"
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error calling Azure API: {e}")
-            reply_content = f"调用 Azure API 时发生错误: {str(e)}"
-
-        reply = Reply()
-        reply.type = ReplyType.TEXT
-        if not self.url_sum_qa_enabled:
-            reply.content = remove_markdown(reply_content)
-        elif isgroup or not self.note_enabled:
-            reply.content = f"{remove_markdown(reply_content)}\n\n💬5min内输入{self.url_sum_qa_prefix}+问题，可继续追问"
-        elif self.note_enabled:
-            reply.content = f"{remove_markdown(reply_content)}\n\n💬5min内输入{self.url_sum_qa_prefix}+问题，可继续追问\n💡输入{self.note_prefix}+笔记，可保存到{self.note_service}"
-        
-        e_context["reply"] = reply
-        e_context.action = EventAction.BREAK_PASS
-
-    def handle_aliyun_url(self, content, e_context):
-        logger.info('Handling Aliyun request for URL...')
-        # 1. 获取网页内容和标题
-        webpage_content, webpage_title = self.get_webpage_content(content)
-        if not webpage_content:
-            reply_content = "无法获取网页内容，请检查链接是否有效"
-            # 直接构建回复并返回
-            reply = Reply()
-            reply.type = ReplyType.TEXT
-            reply.content = reply_content
-            e_context["reply"] = reply
-            e_context.action = EventAction.BREAK_PASS
-            return # 提前返回
-        else:
-            # 2. 获取配置和参数
-            api_key = self.aliyun_key
-            api_base = self.aliyun_base_url
-            
-            msg: ChatMessage = e_context["context"]["msg"]
-            user_id = msg.from_user_id
-            user_params = self.params_cache.get(user_id, {})
-            isgroup = e_context["context"].get("isgroup", False)
-            prompt = user_params.get('prompt', self.url_sum_prompt)
-            
-            # 添加详细日志
-            logger.info(f"用户ID: {user_id}, 参数缓存: {user_params}")
-            logger.info(f"提取的prompt值: '{prompt}'")
-            logger.info(f"URL提示词默认值: '{self.url_sum_prompt}'")
-            
-            reply_content = "处理时发生未知错误" # 初始化默认错误消息
-            try:
-                logger.info('Sending request to Aliyun...')
-                logger.info(f'Request URL: {api_base}')
-                
-                result_content = None # 初始化结果内容
-
-                # -- 更新 Prompt --
-                # 新的系统 Prompt
-                new_system_prompt = (
-                    '你是一个新闻专家，我会给你发文章标题和内容，请你用简单明了的语言做总结。'
-                    '请严格按照以下格式输出：\n'
-                    '📰《*{文章标题}*》\n\n'
-                    '📌总结\n'
-                    '一句话讲清楚整篇文章的核心观点，控制在30字左右。\n\n'
-                    '💡要点\n'
-                    '用数字序号列出来3-5个文章的核心内容，尽量使用emoji让你的表达更生动'
-                )
-
-                # 增加详细日志
-                logger.info(f"检查是否有追问: 'prompt' in user_params = {('prompt' in user_params)}")
-                if 'prompt' in user_params:
-                    logger.info(f"追问内容: '{user_params['prompt']}'")
-                    logger.info(f"追问内容非空检查: user_params['prompt'].strip() = '{user_params['prompt'].strip()}' (非空={bool(user_params['prompt'].strip())})")
-                
-                # 新的用户 Prompt 内容
-                if 'prompt' in user_params and user_params['prompt'].strip():
-                    # 用户有追问，将追问和网页内容结合
-                    logger.info("检测到有效追问，正在处理追问内容...")
-                    user_question = user_params['prompt'].strip()
-                    if webpage_title:
-                        user_content = f"文章标题：{webpage_title}\n\n文章内容：\n{webpage_content[:5500]}\n\n用户问题：{user_question}"
-                    else:
-                        user_content = f"文章内容：\n{webpage_content[:5700]}\n\n用户问题：{user_question}"
-                    # 如果是追问，调整系统提示
-                    new_system_prompt = (
-                        '你是一个新闻专家，我会给你发文章标题、内容和用户问题。请针对用户的具体问题，'
-                        '根据文章内容给出准确、有帮助的回答。保持专业、客观的语气，使用emoji让表达更生动。'
-                    )
-                    logger.info("已成功构建追问内容和系统提示")
-                else:
-                    # 没有追问，使用原有逻辑
-                    logger.info("没有检测到有效追问，使用默认总结逻辑")
-                    if webpage_title:
-                        user_content = f"文章标题：{webpage_title}\n\n文章内容：\n{webpage_content[:5800]}"
-                    else:
-                        # 如果没有提取到标题，则不包含标题前缀
-                        user_content = webpage_content[:6000]
-
-                if has_openai:
-                    # 使用OpenAI客户端库
-                    try:
-                        client = OpenAI(
-                            api_key=api_key,
-                            base_url=api_base
-                        )
-                        
-                        # 构造 messages 列表
-                        messages_to_send = [
-                            {"role": "system", "content": new_system_prompt}, # 使用新的 system prompt
-                            {"role": "user", "content": user_content} # 使用新的 user content
-                        ]
-                        # 添加日志记录
-                        # logger.debug(f"Messages sent to Aliyun (OpenAI client): {[{"role": "system", "content": new_system_prompt}, {"role": "user", "content": user_content}]}")
-                        messages_to_log = [{"role": "system", "content": new_system_prompt}, {"role": "user", "content": user_content}]
-                        logger.debug(f"Messages sent to Aliyun (OpenAI client): {repr(messages_to_log)}")
-                        
-                        completion = client.chat.completions.create(
-                            model=self.aliyun_sum_model,
-                            messages=[
-                                {"role": "system", "content": new_system_prompt},
-                                {"role": "user", "content": user_content}
-                            ],
-                            temperature=0.7,
-                            max_tokens=2000
-                        )
-                        
-                        result_content = completion.choices[0].message.content # 获取总结结果
-                        
-                    except Exception as e:
-                        logger.error(f"Error using OpenAI client for Aliyun API: {e}")
-                        # 失败后回退到直接使用requests
-                        # 这里不需要 raise e，让它继续尝试 requests
-                        logger.info("Falling back to requests...")
-                        pass # 继续执行下面的 else 块
-                        
-                # 如果没有 OpenAI 库或者 OpenAI 客户端调用失败
-                if result_content is None:
-                    # 使用requests直接调用
-                    headers = {
-                        'Content-Type': 'application/json',
-                        'Authorization': f'Bearer {api_key}'
-                    }
-                    
-                    # 构建请求体
-                    payload = {
-                        "model": self.aliyun_sum_model,
-                        "messages": [
-                            {"role": "system", "content": new_system_prompt}, # 使用新的 system prompt
-                            {"role": "user", "content": user_content} # 使用新的 user content
-                        ],
-                        "temperature": 0.7,
-                        "max_tokens": 2000
-                    }
-                    # 添加日志记录 (在调用前记录)
-                    logger.debug(f"Messages sent to Aliyun (requests): {payload['messages']}")
-                     
-                    logger.info(f'Request headers: {headers}')
-                    logger.info(f'Request payload: {payload}')
-                    response = requests.post(
-                        api_base if "/chat/completions" in api_base else f"{api_base}/chat/completions",
-                        headers=headers,
-                        json=payload,
-                        verify=False,
-                        timeout=30
-                    )
-                    response.raise_for_status()
-                    logger.info('Received response from Aliyun via requests.')
-                    
-                    response_data = response.json()
-                    if "choices" in response_data and len(response_data["choices"]) > 0:
-                        result_content = response_data["choices"][0]["message"]["content"]
-                    else:
-                        logger.error('Aliyun API response via requests missing choices.')
-                        reply_content = "无法获取有效的响应内容 (requests)"
-                        raise Exception("Invalid API response via requests") # 触发外层 except
-
-                # -- 统一处理获取到的 result_content --
-                if result_content:
-                    # 新的组装逻辑 (移除，直接使用 result_content)
-                    # 修正缩进
-                    reply_content = result_content
-
-                    # 更新缓存
-                    self.params_cache[user_id]['content'] = result_content # 缓存总结内容
-                    if webpage_title:
-                       self.params_cache[user_id]['title'] = webpage_title # 缓存提取的标题
-                else:
-                    # 如果 result_content 仍然是 None (两个方法都失败了)
-                    reply_content = "无法从阿里云获取总结内容"
-
-            except Exception as e:
-                # 捕获所有 API 调用和处理中的异常
-                logger.error(f"Error calling Aliyun API or processing result: {e}")
-                logger.error(f"Error details: {str(e)}")
-                if hasattr(e, 'response') and e.response:
-                    logger.error(f"Response status code: {e.response.status_code}")
-                    logger.error(f"Response content: {e.response.text}")
-                # 如果 reply_content 仍然是初始错误消息，则使用通用错误
-                if reply_content == "处理时发生未知错误": 
-                    reply_content = f"调用阿里百炼 API 时发生错误: {str(e)}"
-
-        # -- 统一构建最终回复 --
-        reply = Reply()
-        reply.type = ReplyType.TEXT
-        if not self.url_sum_qa_enabled:
-            reply.content = remove_markdown(reply_content)
-        elif isgroup or not self.note_enabled:
-            reply.content = f"{remove_markdown(reply_content)}\n\n💬5min内输入{self.url_sum_qa_prefix}+问题，可继续追问"
-        elif self.note_enabled:
-            reply.content = f"{remove_markdown(reply_content)}\n\n💬5min内输入{self.url_sum_qa_prefix}+问题，可继续追问\n💡输入{self.note_prefix}+笔记，可保存到{self.note_service}"
-        
-        e_context["reply"] = reply
-        e_context.action = EventAction.BREAK_PASS
-
-    def handle_aliyun_file(self, content, e_context):
-        logger.info("handle_aliyun_file: 使用阿里云API处理文件内容")
-        api_key = self.aliyun_key
-        api_base = self.aliyun_base_url
-        
-        msg: ChatMessage = e_context["context"]["msg"]
-        user_id = msg.from_user_id
-        user_params = self.params_cache.get(user_id, {})
-        prompt = user_params.get('prompt', self.file_sum_prompt)
-        
-        if has_openai:
-            # 使用OpenAI客户端库
-            try:
-                logger.info(f"使用OpenAI客户端调用阿里云API: {api_base}")
-                client = OpenAI(
-                    api_key=api_key,
-                    base_url=api_base
-                )
-                
-                completion = client.chat.completions.create(
-                    model=self.aliyun_sum_model,
-                    messages=[
-                        {"role": "system", "content": prompt},
-                        {"role": "user", "content": content}
-                    ],
-                    temperature=0.7,
-                    max_tokens=2000
-                )
-                
-                logger.info("OpenAI客户端成功获取响应")
-                response_content = completion.choices[0].message.content.strip()
-                return response_content.replace("\\n", "\n")
-                
-            except Exception as e:
-                logger.error(f"使用OpenAI客户端调用阿里云API出错: {e}")
-                logger.info("转为使用requests直接调用")
-        
-        # 使用requests直接调用
-        try:
-            logger.info("使用requests直接调用阿里云API")
-            headers = {
-                'Content-Type': 'application/json',
-                'Authorization': f'Bearer {api_key}'
-            }
-            
-            data = {
-                "model": self.aliyun_sum_model,
-                "messages": [
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": content}
-                ],
-                "temperature": 0.7,
-                "max_tokens": 2000
-            }
-            
-            api_url = api_base if "/chat/completions" in api_base else f"{api_base}/chat/completions"
-            logger.info(f"请求URL: {api_url}")
-            
-            response = requests.post(
-                api_url,
-                headers=headers,
-                json=data,
-                verify=False,
-                timeout=30
-            )
-            
-            response.raise_for_status()
-            logger.info(f"API响应状态码: {response.status_code}")
-            
-            response_data = response.json()
-            if "choices" in response_data and len(response_data["choices"]) > 0:
-                first_choice = response_data["choices"][0]
-                if "message" in first_choice and "content" in first_choice["message"]:
-                    response_content = first_choice["message"]["content"].strip()
-                    logger.info("成功获取阿里云API响应内容")
-                    return response_content.replace("\\n", "\n")
-                else:
-                    logger.error("阿里云API响应中未找到内容字段")
-                    return "未能从阿里云API获取有效的响应内容"
-            else:
-                logger.error("阿里云API响应中未找到choices字段")
-                return "未能从阿里云API获取有效的响应内容"
-                
-        except Exception as e:
-            logger.error(f"调用阿里云API时出错: {e}")
-            if hasattr(e, 'response') and e.response:
-                logger.error(f"响应状态码: {e.response.status_code}")
-                logger.error(f"响应内容: {e.response.text}")
-            return f"调用阿里云API时发生错误: {str(e)}"
-        
-    def extract_content(self, file_path):
-        logger.info(f"extract_content: 提取文件内容，文件路径: {file_path}")
-        file_size = os.path.getsize(file_path) // 1000  # 将文件大小转换为KB
-        if file_size > int(self.max_file_size):
-            logger.warning(f"文件大小超过限制({self.max_file_size}KB),不进行处理。文件大小: {file_size}KB")
-            return None
-        file_extension = os.path.splitext(file_path)[1][1:].lower()
-        logger.info(f"extract_content: 文件类型为 {file_extension}")
-
-        file_type = EXTENSION_TO_TYPE.get(file_extension)
-
-        if not file_type:
-            logger.error(f"不支持的文件扩展名: {file_extension}")
-            return None
-
-        read_func = {
-            'pdf': self.read_pdf,
-            'docx': self.read_word,
-            'md': self.read_markdown,
-            'txt': self.read_txt,
-            'excel': self.read_excel,
-            'csv': self.read_csv,
-            'html': self.read_html,
-            'ppt': self.read_ppt
-        }.get(file_type)
-
-        if not read_func:
-            logger.error(f"不支持的文件类型: {file_type}")
-            return None
-        logger.info("extract_content: 文件内容提取完成")
-        return read_func(file_path)
-
-    # Add the handle_sflow_url method implementation here
-    def handle_sflow_url(self, content, e_context):
-        # Add log at the beginning of handle_sflow_url
-        logger.info("[sum4all] Entering handle_sflow_url")
-        # 1. 获取网页内容和标题
-        webpage_content, webpage_title = self.get_webpage_content(content)
-        if not webpage_content:
-            reply_content = "无法获取网页内容，请检查链接是否有效"
-            logger.warning(f"[sum4all][sflow] Failed to get webpage content for URL: {content}")
-            reply = Reply(type=ReplyType.TEXT, content=reply_content)
-            e_context["reply"] = reply
-            e_context.action = EventAction.BREAK_PASS
-            return
-        else:
-            # Log successful content retrieval
-            logger.info(f"[sum4all][sflow] Successfully fetched webpage content. Title: '{webpage_title}'. Content length: {len(webpage_content)}")
-            logger.debug(f"[sum4all][sflow] Webpage content snippet: {webpage_content[:200]}..." )
-
-        # 2. 获取配置和参数 - CORRECTED variable usage
-        # api_key = self.sflow_key # Old incorrect variable
-        # api_base = self.sflow_base_url # Old incorrect variable
-        # model = self.sflow_model # Old incorrect variable
-        api_key = self.siliconflow_key # Use correctly loaded key
-        api_base = self.siliconflow_base_url # Use correctly loaded base url
-        # Use the specific sum model for URL summarization
-        model = self.siliconflow_sum_model 
-
-        msg: ChatMessage = e_context["context"]["msg"]
-        user_id = msg.from_user_id
-        user_params = self.params_cache.get(user_id, {})
-        isgroup = e_context["context"].get("isgroup", False)
-        prompt = user_params.get('prompt', self.url_sum_prompt) # Use the general url_sum_prompt for now
-
-        logger.info(f"[sum4all][sflow] Using API Key: {'*' * (len(api_key) - 4) + api_key[-4:] if api_key else 'None'}")
-        logger.info(f"[sum4all][sflow] Using API Base: {api_base}")
-        logger.info(f"[sum4all][sflow] Using Model: {model}")
-
-        # 3. 构建 API 请求
-        headers = {
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {api_key}'
-        }
-
-        # Re-use a similar system prompt structure
-        system_prompt = (
-            '你是一个新闻专家，我会给你发文章标题和内容，请你用简单明了的语言做总结。'
-            '请严格按照以下格式输出：\\n'
-            '📰《*{文章标题}*》\\n\\n'
-            '📌总结\\n'
-            '一句话讲清楚整篇文章的核心观点，控制在30字左右。\\n\\n'
-            '💡要点\\n'
-            '用数字序号列出来3-5个文章的核心内容，尽量使用emoji让你的表达更生动'
-        )
-
-        # Handle potential QA prompt
-        if 'prompt' in user_params and user_params['prompt'].strip():
-            logger.info("[sum4all][sflow] Detected follow-up question.")
-            user_question = user_params['prompt'].strip()
-            if webpage_title:
-                user_content = f"文章标题：{webpage_title}\\n\\n文章内容：\\n{webpage_content[:5500]}\\n\\n用户问题：{user_question}" # Limit content length
-            else:
-                user_content = f"文章内容：\\n{webpage_content[:5700]}\\n\\n用户问题：{user_question}" # Limit content length
-            system_prompt = ( # Adjust system prompt for QA
-                '你是一个新闻专家，我会给你发文章标题、内容和用户问题。请针对用户的具体问题，'
-                '根据文章内容给出准确、有帮助的回答。保持专业、客观的语气，使用emoji让你的表达更生动。'
-            )
-        else:
-            logger.info("[sum4all][sflow] No follow-up question detected, performing summarization.")
-            if webpage_title:
-                user_content = f"文章标题：{webpage_title}\\n\\n文章内容：\\n{webpage_content[:5800]}" # Limit content length
-            else:
-                user_content = webpage_content[:6000] # Limit content length
-
-        # Log the prompts being sent
-        logger.debug(f"[sum4all][sflow] System prompt being sent: {system_prompt[:200]}..." )
-        logger.debug(f"[sum4all][sflow] User content being sent: {user_content[:300]}..." )
-
-        payload = {
-            "model": model, # Correct model variable is now used
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content}
-            ],
-            "temperature": 0.7, # You might adjust this
-            "max_tokens": 1500 # Adjust as needed
-        }
-        logger.debug(f"[sum4all][sflow] Request payload: {payload}")
-
-        # 4. 调用 API
-        reply_content = "处理时发生未知错误" # Default error message
-        try:
-            logger.info(f"[sum4all][sflow] Sending request to SiliconFlow API: {api_base}/chat/completions")
-            # Ensure api_base is not empty before making the call
-            if not api_base:
-                 logger.error("[sum4all][sflow] API Base URL is empty. Cannot send request.")
-                 raise ValueError("SiliconFlow API Base URL is not configured.")
-            response = requests.post(
-                f"{api_base}/chat/completions", # Assuming standard endpoint path
-                headers=headers,
-                json=payload,
-                verify=False, # Consider security implications
-                timeout=60 # Increased timeout
-            )
-            logger.info(f"[sum4all][sflow] Received response status code: {response.status_code}")
-            response.raise_for_status() # Check for HTTP errors first
-            response_data = response.json()
-            logger.debug(f"[sum4all][sflow] Response data: {response_data}")
-
-            # Parse response
-            if "choices" in response_data and len(response_data["choices"]) > 0:
-                result_content = response_data["choices"][0].get("message", {}).get("content")
-                if result_content:
-                    reply_content = result_content
-                    # Log successful content extraction
-                    logger.info("[sum4all][sflow] Successfully extracted content from SiliconFlow response.")
-                    logger.debug(f"[sum4all][sflow] Extracted content snippet: {reply_content[:200]}..." )
-                    # Update cache
-                    self.params_cache[user_id]['content'] = result_content
-                    if webpage_title:
-                        self.params_cache[user_id]['title'] = webpage_title
-                    logger.info("[sum4all][sflow] Successfully processed SiliconFlow response and updated cache.")
-                else:
-                    logger.error("[sum4all][sflow] 'content' field missing in API response choice.")
-                    reply_content = "无法从 SiliconFlow API 获取有效的响应内容 (content missing)"
-            else:
-                logger.error("[sum4all][sflow] 'choices' field missing or empty in API response.")
-                reply_content = "无法从 SiliconFlow API 获取有效的响应内容 (choices missing)"
-
-        except ValueError as ve:
-            logger.error(f"[sum4all][sflow] Configuration error: {ve}")
-            reply_content = f"配置错误: {ve}"
-        except requests.exceptions.Timeout:
-            logger.error("[sum4all][sflow] Request to SiliconFlow API timed out.")
-            reply_content = "调用 SiliconFlow API 超时"
-        except requests.exceptions.RequestException as e:
-            logger.error(f"[sum4all][sflow] Error calling SiliconFlow API: {e}")
-            if hasattr(e, 'response') and e.response is not None:
-                logger.error(f"[sum4all][sflow] Response status code: {e.response.status_code}")
-                logger.error(f"[sum4all][sflow] Response content: {e.response.text}") # Corrected typo sfollow -> sflow
-                reply_content = f"调用 SiliconFlow API 时发生错误: Status {e.response.status_code}" # More informative error
-            else:
-                 reply_content = f"调用 SiliconFlow API 时发生网络错误: {str(e)}"
-
-        # 5. 构建回复
-        reply = Reply()
-        reply.type = ReplyType.TEXT
-        # Format reply with QA/Note prompts
-        if not self.url_sum_qa_enabled:
-            reply.content = remove_markdown(reply_content)
-        elif isgroup or not self.note_enabled:
-            reply.content = f"{remove_markdown(reply_content)}\n\n💬5min内输入{self.url_sum_qa_prefix}+问题，可继续追问"
-        elif self.note_enabled:
-            reply.content = f"{remove_markdown(reply_content)}\n\n💬5min内输入{self.url_sum_qa_prefix}+问题，可继续追问\n💡输入{self.note_prefix}+笔记，可保存到{self.note_service}"
-
-        e_context["reply"] = reply
-        e_context.action = EventAction.BREAK_PASS
-
-def remove_markdown(text):
-    # 替换Markdown的粗体标记
-    text = text.replace("**", "")
-    # 替换Markdown的标题标记
-    text = text.replace("### ", "").replace("## ", "").replace("# ", "")
-    return text
