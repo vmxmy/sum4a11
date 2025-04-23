@@ -23,6 +23,7 @@
 1.  **获取 API 密钥:** 前往阿里云、硅基流动或其他您想使用的 LLM 服务提供商官网获取 API Key 和 API Base URL。
 
 2.  **主配置文件 (`config.json`):**
+    *   把插件目录下的config.json.template复制为 config.json,并去掉其中的注释。
     *   在根目录的 `config.json` 文件的 `"keys"` 部分，添加对应服务的配置项。请参考本插件目录下的 `config.json.template` 文件作为示例，例如添加：
       ```json
       "keys": {
@@ -58,7 +59,7 @@
       }
       ```
 
-3.  **模板文件:** 本插件目录下的 `config.json.template` 文件提供了更详细的配置项说明和示例，请务必参考。
+4.  **模板文件:** 本插件目录下的 `config.json.template` 文件提供了更详细的配置项说明和示例，请务必参考。
 
 ## 使用
 
