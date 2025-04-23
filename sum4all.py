@@ -360,7 +360,8 @@ class sum4all(Plugin):
             elif self.url_sum_service == "aliyun":
                 self.handle_aliyun_url(content, e_context)
             elif self.url_sum_service == "sflow": # Existing elif for sflow
-                self.handle_sflow_url(content, e_context) # Call the sflow handler
+                # Replace pass with the call to the new handler
+                self.handle_sflow_url(content, e_context)
         elif service_type == "note":
             if self.note_service == "flomo":
                 self.handle_note(content, e_context)
@@ -1563,3 +1564,102 @@ class sum4all(Plugin):
 2. 然后列出3-5个关键要点
 3. 使用emoji让表达更生动
 4. 保持专业、客观的语气"""
+
+    def handle_sflow_url(self, content, e_context):
+        logger.info("[sum4all][sflow_url] Handling SiliconFlow URL summarization request...")
+        api_key = self.siliconflow_key
+        api_base = self.siliconflow_base_url
+        model = self.siliconflow_sum_model # Use the SUM model for URL summary
+
+        if not api_key or not api_base or not model:
+            logger.error("[sum4all][sflow_url] SiliconFlow configuration (key, base_url, or sum_model) is missing.")
+            reply_content = "SiliconFlow 配置不完整，无法处理 URL 总结"
+        else:
+            msg: ChatMessage = e_context["context"]["msg"]
+            user_id = msg.from_user_id
+            user_params = self.params_cache.get(user_id, {})
+            isgroup = e_context["context"].get("isgroup", False)
+            # Use the general url_sum_prompt, or define a specific one if needed
+            prompt = user_params.get('prompt', self.url_sum_prompt if self.url_sum_prompt else "请总结以下网页内容:")
+
+            # Get webpage content
+            webpage_content, extracted_title = self.get_webpage_content(content) # Expecting (text, title)
+
+            if not webpage_content:
+                reply_content = "无法获取网页内容，请检查链接是否有效或稍后再试"
+            else:
+                headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}"
+                }
+                # Construct payload similar to other text models
+                payload = {
+                    "model": model,
+                    "messages": [
+                        # You might want a more specific system prompt for summarization
+                        {"role": "system", "content": "你是一个专业的网页内容总结专家。请根据以下内容进行总结。"},
+                        {"role": "user", "content": f"{prompt}\\n\\n网页内容:\\n{webpage_content[:8000]}"} # Limit content length
+                    ],
+                    "temperature": 0.7,
+                    "max_tokens": 1500 # Adjust max_tokens as needed for summaries
+                }
+                logger.debug(f"[sum4all][sflow_url] Sending payload to {api_base}/chat/completions")
+                reply_content = "处理 URL 总结时发生未知错误" # Default error
+
+                try:
+                    response = requests.post(
+                        f"{api_base}/chat/completions",
+                        headers=headers,
+                        json=payload,
+                        verify=False, # Consider security implications
+                        timeout=60    # Adjust timeout as needed
+                    )
+                    logger.info(f"[sum4all][sflow_url] Received response status: {response.status_code}")
+                    response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+                    response_data = response.json()
+                    logger.debug(f"[sum4all][sflow_url] Response data: {response_data}")
+
+                    if "choices" in response_data and len(response_data["choices"]) > 0:
+                        result = response_data["choices"][0].get("message", {}).get("content")
+                        if result:
+                            reply_content = result.strip().replace("\\n", "\n")
+                            self.params_cache[user_id]['content'] = reply_content # Cache the summary content
+                            # Use extracted title if available, otherwise try to get from summary
+                            title = extracted_title if extracted_title else reply_content.split('\\n')[0].strip()
+                            self.params_cache[user_id]['title'] = title # Cache the title
+
+                            logger.info("[sum4all][sflow_url] Successfully extracted content from response.")
+                        else:
+                            logger.error("[sum4all][sflow_url] 'content' missing in response choice.")
+                            reply_content = "无法从 SiliconFlow API 获取有效的响应内容 (content missing)"
+                    else:
+                        logger.error("[sum4all][sflow_url] 'choices' missing or empty in response.")
+                        reply_content = "无法从 SiliconFlow API 获取有效的响应内容 (choices missing)"
+
+                except requests.exceptions.Timeout:
+                    logger.error("[sum4all][sflow_url] Request timed out.")
+                    reply_content = "调用 SiliconFlow API 处理 URL 总结超时"
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"[sum4all][sflow_url] API request error: {e}")
+                    if hasattr(e, 'response') and e.response is not None:
+                        logger.error(f"[sum4all][sflow_url] Response status code: {e.response.status_code}")
+                        logger.error(f"[sum4all][sflow_url] Response content: {e.response.text}")
+                        reply_content = f"调用 SiliconFlow API 处理 URL 总结出错: Status {e.response.status_code}"
+                    else:
+                        reply_content = f"调用 SiliconFlow API 处理 URL 总结时发生网络错误: {str(e)}"
+
+        # Format and set the final reply
+        reply = Reply()
+        reply.type = ReplyType.TEXT
+        final_reply_text = remove_markdown(reply_content)
+
+        # Add QA suffix based on config
+        if self.url_sum_qa_enabled:
+             suffix = f"\\n\\n💬5min内输入{self.url_sum_qa_prefix}+问题，可继续追问"
+             if not isgroup and self.note_enabled: # Add note suffix only in private chat if enabled
+                 suffix += f"\\n💡输入{self.note_prefix}+笔记，可保存到{self.note_service}"
+             final_reply_text += suffix
+
+        reply.content = final_reply_text
+        e_context["reply"] = reply
+        e_context.action = EventAction.BREAK_PASS
