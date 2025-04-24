@@ -1663,3 +1663,132 @@ class sum4all(Plugin):
         reply.content = final_reply_text
         e_context["reply"] = reply
         e_context.action = EventAction.BREAK_PASS
+
+    def handle_aliyun_url(self, content, e_context):
+        logger.info("[sum4all][aliyun_url] Handling Aliyun URL summarization request...")
+        api_key = self.aliyun_key
+        api_base = self.aliyun_base_url
+        model = self.aliyun_sum_model # Use the SUM model for URL summary
+
+        if not api_key or not api_base or not model:
+            logger.error("[sum4all][aliyun_url] Aliyun configuration (key, base_url, or sum_model) is missing.")
+            reply_content = "阿里云 配置不完整，无法处理 URL 总结"
+        else:
+            msg: ChatMessage = e_context["context"]["msg"]
+            user_id = msg.from_user_id
+            user_params = self.params_cache.get(user_id, {})
+            isgroup = e_context["context"].get("isgroup", False)
+            # Use the general url_sum_prompt, or define a specific one if needed
+            prompt = user_params.get('prompt', self.url_sum_prompt if self.url_sum_prompt else "请总结以下网页内容:")
+
+            # Get webpage content
+            webpage_content, extracted_title = self.get_webpage_content(content) # Expecting (text, title)
+
+            if not webpage_content:
+                reply_content = "无法获取网页内容，请检查链接是否有效或稍后再试"
+            else:
+                reply_content = "处理 URL 总结时发生未知错误" # Default error
+                # Use the OpenAI client library approach first if available
+                if has_openai:
+                    try:
+                        logger.info(f"[sum4all][aliyun_url] Using OpenAI client for Aliyun API: {api_base}")
+                        client = OpenAI(
+                            api_key=api_key,
+                            base_url=api_base
+                        )
+
+                        completion = client.chat.completions.create(
+                            model=model,
+                            messages=[
+                                {"role": "system", "content": prompt},
+                                {"role": "user", "content": webpage_content[:8000]} # Limit content length
+                            ],
+                            temperature=0.7,
+                            max_tokens=2000
+                        )
+
+                        logger.info("[sum4all][aliyun_url] OpenAI client successfully received response.")
+                        result = completion.choices[0].message.content.strip()
+                        reply_content = result.replace("\\n", "\n")
+
+                    except Exception as e:
+                        logger.error(f"[sum4all][aliyun_url] Error using OpenAI client for Aliyun API: {e}")
+                        logger.info("[sum4all][aliyun_url] Falling back to direct requests.")
+                        reply_content = None # Signal fallback needed
+                else:
+                    logger.info("[sum4all][aliyun_url] OpenAI library not found, using direct requests.")
+                    reply_content = None # Signal direct request needed
+
+                # Fallback to direct requests if OpenAI client failed or is not available
+                if reply_content is None:
+                    try:
+                        logger.info("[sum4all][aliyun_url] Using direct requests for Aliyun API.")
+                        headers = {
+                            'Content-Type': 'application/json',
+                            'Authorization': f'Bearer {api_key}'
+                        }
+                        payload = {
+                            "model": model,
+                            "messages": [
+                                {"role": "system", "content": prompt},
+                                {"role": "user", "content": webpage_content[:8000]} # Limit content length
+                            ],
+                            "temperature": 0.7,
+                            "max_tokens": 2000
+                        }
+                        api_url = api_base if "/chat/completions" in api_base else f"{api_base}/chat/completions"
+                        response = requests.post(
+                            api_url,
+                            headers=headers,
+                            json=payload,
+                            verify=False, # Consider security implications
+                            timeout=60    # Adjust timeout as needed
+                        )
+                        logger.info(f"[sum4all][aliyun_url] Received direct response status: {response.status_code}")
+                        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+                        response_data = response.json()
+                        if "choices" in response_data and len(response_data["choices"]) > 0:
+                            result = response_data["choices"][0].get("message", {}).get("content")
+                            if result:
+                                reply_content = result.strip().replace("\\n", "\n")
+                            else:
+                                logger.error("[sum4all][aliyun_url] 'content' missing in direct response choice.")
+                                reply_content = "无法从阿里云 API 获取有效的响应内容 (content missing - direct)"
+                        else:
+                            logger.error("[sum4all][aliyun_url] 'choices' missing or empty in direct response.")
+                            reply_content = "无法从阿里云 API 获取有效的响应内容 (choices missing - direct)"
+                    except requests.exceptions.Timeout:
+                        logger.error("[sum4all][aliyun_url] Direct request timed out.")
+                        reply_content = "调用阿里云 API 处理 URL 总结超时 (direct)"
+                    except requests.exceptions.RequestException as e:
+                        logger.error(f"[sum4all][aliyun_url] Direct API request error: {e}")
+                        if hasattr(e, 'response') and e.response is not None:
+                            logger.error(f"[sum4all][aliyun_url] Direct Response status code: {e.response.status_code}")
+                            logger.error(f"[sum4all][aliyun_url] Direct Response content: {e.response.text}")
+                            reply_content = f"调用阿里云 API 处理 URL 总结出错: Status {e.response.status_code} (direct)"
+                        else:
+                            reply_content = f"调用阿里云 API 处理 URL 总结时发生网络错误: {str(e)} (direct)"
+
+                # Cache results if successful
+                if reply_content and not reply_content.startswith("无法") and not reply_content.startswith("调用"):
+                     self.params_cache[user_id]['content'] = reply_content # Cache the summary content
+                     title = extracted_title if extracted_title else reply_content.split('\\n')[0].strip()
+                     self.params_cache[user_id]['title'] = title # Cache the title
+                     logger.info("[sum4all][aliyun_url] Successfully extracted content and cached.")
+
+
+        # Format and set the final reply
+        reply = Reply()
+        reply.type = ReplyType.TEXT
+        final_reply_text = remove_markdown(reply_content)
+
+        # Add QA suffix based on config
+        if self.url_sum_qa_enabled:
+             suffix = f"\\n\\n💬5min内输入{self.url_sum_qa_prefix}+问题，可继续追问"
+             if not isgroup and self.note_enabled: # Add note suffix only in private chat if enabled
+                 suffix += f"\\n💡输入{self.note_prefix}+笔记，可保存到{self.note_service}"
+             final_reply_text += suffix
+
+        reply.content = final_reply_text
+        e_context["reply"] = reply
+        e_context.action = EventAction.BREAK_PASS
